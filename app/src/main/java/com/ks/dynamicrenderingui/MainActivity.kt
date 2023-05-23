@@ -1,6 +1,7 @@
 package com.ks.dynamicrenderingui
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
@@ -12,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -20,6 +22,7 @@ import com.google.gson.Gson
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,90 +31,255 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.room.Room
 import com.ks.dynamicrenderingui.ui.theme.DynamicRenderingUITheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class Question(
+    val questionNumber:String,
     val questionTitle: String,
     val questionType: String,
     val questionOptional: Boolean
 )
+
 class MainActivity : ComponentActivity() {
 
-   private val jsonString = """[
-    {
+    private val jsonString = """[
+    {    "questionNumber": "1",
         "questionTitle": "Please provide a rating",
         "questionType": "RATING",
         "questionOptional": true
     },
-    {
+    {    "questionNumber": "2",
         "questionTitle": "Describe your feedback",
         "questionType": "EDITABLE",
         "questionOptional": true
     }
+//    {    "questionNumber": "3",
+//        "questionTitle": "Suggestions",
+//        "questionType": "EDITABLE",
+//        "questionOptional": true
+//    },
+//     {  
+//          "questionNumber": "4",
+//        "questionTitle": "Please provide a rating",
+//        "questionType": "RATING",
+//        "questionOptional": true
+//    }
+//    {
+//         "questionNumber": "5",
+//        "questionTitle": "Describe your feedback",
+//        "questionType": "EDITABLE",
+//        "questionOptional": true
+//    },
+//    {     "questionNumber": "6",
+//        "questionTitle": "Suggestions",
+//        "questionType": "EDITABLE",
+//        "questionOptional": true
+//    },
+////    
+//     {
+//        "questionTitle": "Please provide a rating",
+//        "questionType": "RATING",
+//        "questionOptional": true
+//    },
+//    {
+//        "questionTitle": "Describe your feedback",
+//        "questionType": "EDITABLE",
+//        "questionOptional": true
+//    },
+//
+//    { 
+//        "questionNumber": "3",
+//        "questionTitle": "Suggestions",
+//        "questionType": "EDITABLE",
+//        "questionOptional": true
+//   }
 ]"""
-   private val gson = Gson()
-   private val questionList = gson.fromJson(jsonString, Array<Question>::class.java).toList()
+    private val gson = Gson()
+    private val questionList = gson.fromJson(jsonString, Array<Question>::class.java).toList()
+    private lateinit var database: AppDatabase
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        database = Room.databaseBuilder(applicationContext, AppDatabase::class.java, "app_database")
+            .build()
         setContent {
             DynamicRenderingUITheme {
-                QuestionList(questionList = questionList)
+                val navController = rememberNavController()
+                NavHost(navController, startDestination = "questionList") {
+                    composable("questionList") {
+                        QuestionList(
+                            modifier = Modifier,
+                            questionList = questionList,
+                            onNextClicked = { navController.navigate("nextPage") },
+                            onQuestionResponseSubmitted = { questionNumber, rating, editableValue ->
+                                CoroutineScope(Dispatchers.Main).launch {
+                                    storeQuestionResponse(questionNumber, rating, editableValue)
+                                }
+                            }
+                        )
+
+
+                    }
+                    composable("nextPage") {
+                        NextPage(database.questionResponseDao(),questionList)
+                    }
+
+                }
             }
         }
     }
-}
-@Composable
-fun QuestionItem(question:Question) {
 
-    Surface(
-        color = MaterialTheme.colorScheme.onPrimary,
-        modifier = Modifier.padding(vertical = 0.dp, horizontal = 10.dp)
-    ) {
-        Column {
+    private  fun storeQuestionResponse(questionNumber: String, rating: Int, editableValue: String) {
+        val questionResponse = QuestionResponse(questionNumber, rating, editableValue)
+        CoroutineScope(Dispatchers.IO).launch {
+            database.questionResponseDao().insert(questionResponse)
+        }
+    }
 
-            Text(text = question.questionTitle, fontSize = 25.sp)
+    }
 
-            when (question.questionType) {
-                "RATING" -> {
-                    val rating = remember { mutableStateOf(0) }
-                    Row {
-                        repeat(5) { index ->
-                            Icon(
-                                imageVector = Icons.Filled.Star,
-                                contentDescription = null,
-                                tint = if (index < rating.value) Color.Green else Color.Gray,
-                                modifier = Modifier.clickable {
-                                    rating.value = index + 1
-                                }
-                            )
+
+
+    @Composable
+    fun QuestionItem(question: Question,
+                     onRatingSelected: (rating: Int) -> Unit,
+                     onEditableValueChanged: (editableValue: String) -> Unit
+       ) {
+        Surface(
+            color = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.padding(vertical = 0.dp, horizontal = 10.dp)
+        ) {
+            Column {
+
+                Text(text = question.questionTitle, fontSize = 25.sp)
+
+                when (question.questionType) {
+                    "RATING" -> {
+                        val rating = remember { mutableStateOf(0) }
+                        Row {
+                            repeat(5) { index ->
+                                Icon(
+                                    imageVector = Icons.Filled.Star,
+                                    contentDescription = null,
+                                    tint = if (index < rating.value) Color.Green else Color.Gray,
+                                    modifier = Modifier.clickable {
+                                        rating.value = index + 1
+                                        onRatingSelected(rating.value)
+                                    }
+                                )
+                            }
                         }
                     }
-                }
 
-                "EDITABLE" -> {
-                    var text by remember { mutableStateOf("") }
-                    TextField(
-                        value = text,
-                        onValueChange = { newText ->
-                            text = newText
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        textStyle = LocalTextStyle.current.copy(fontSize = 20.sp)
-                    )
+                    "EDITABLE" -> {
+                        var text by remember { mutableStateOf("") }
+                        TextField(
+                            value = text,
+                            onValueChange = { newText ->
+                                text = newText
+                                onEditableValueChanged(newText)
+
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            textStyle = LocalTextStyle.current.copy(fontSize = 20.sp)
+                        )
+
+                    }
+                }
+            }
+
+        }
+
+    }
+
+    @Composable
+    fun QuestionList(
+        modifier: Modifier = Modifier,
+        questionList: List<Question>,
+        onNextClicked: () -> Unit,
+        onQuestionResponseSubmitted: (questionNumber: String, rating: Int, editableValue: String) -> Unit
+
+    ) {
+        val questionResponses by remember { mutableStateOf(mutableMapOf<String, Pair<Int, String>>()) }
+
+
+
+        LazyColumn(modifier = modifier.padding(vertical = 30.dp)) {
+            items(questionList) { question ->
+                QuestionItem(question = question,
+                    onRatingSelected = {  rating ->
+                        questionResponses[question.questionNumber] =
+                            rating to (questionResponses[question.questionNumber]?.second ?: "")
+
+                    },
+                    onEditableValueChanged = { editableValue ->
+                        questionResponses[question.questionNumber] =
+                            (questionResponses[question.questionNumber]?.first ?: 0) to editableValue
+
+                    }
+                )
+            }
+            item {
+                Button(
+                    onClick = {
+                        onNextClicked()
+                        questionResponses.forEach { ( questionNumber,response) ->
+                            onQuestionResponseSubmitted(questionNumber, response.first, response.second)
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 16.dp, horizontal = 10.dp)
+                ) {
+                    Text(text = "Submit", fontSize = 20.sp)
                 }
             }
         }
     }
-        }
 
 @Composable
-fun QuestionList(modifier: Modifier = Modifier,questionList: List<Question>) {
-    LazyColumn(modifier= modifier.padding(vertical = 30.dp)) {
-        items(questionList) { question ->
-            QuestionItem(question = question)
+fun NextPage(questionResponseDao: QuestionResponseDao, questionList: List<Question>) {
+    var questionResponses by remember { mutableStateOf(emptyList<QuestionResponse>()) }
+    LaunchedEffect(Unit) {
+        questionResponses = withContext(Dispatchers.IO) {
+            questionResponseDao.getAllQuestionResponses()
+        }
+    }
+
+    LazyColumn {
+        items(questionResponses) { questionResponse ->
+            val questionNumber = questionResponse.questionNumber
+            val questionType = getQuestionType(questionNumber,questionList)
+            when (questionType) {
+                "RATING" -> {
+                    Text(text = "Rating: ${questionResponse.rating}",fontSize = 20.sp)
+                    Log.d("QuestionResponse", "Rating: ${questionResponse.rating}")
+                }
+                "EDITABLE" -> {
+                    Text(text = "Feedback: ${questionResponse.editableValue}",fontSize = 20.sp)
+                }
+
+            }
+
         }
     }
 }
+
+private fun getQuestionType(questionNumber: String, questionList: List<Question>):String {
+    val question = questionList.find { it.questionNumber == questionNumber }
+    return question?.questionType ?: ""
+
+}
+
+
+
 
 
 
